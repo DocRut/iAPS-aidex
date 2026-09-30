@@ -11,11 +11,11 @@ jobs:
     runs-on: macos-15
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.PAT_TOKEN }}
-          submodules: recursive
+      - name: Checkout code manually
+        run: |
+          git clone --recurse-submodules --branch aidex-integration \
+            https://x-access-token:${{ secrets.PAT_TOKEN }}@github.com/DocRut/iAPS-aidex.git .
+          git submodule update --init --recursive
 
       - name: Select Xcode and download platforms
         run: |
@@ -28,6 +28,16 @@ jobs:
           
           echo "=== Доступные SDK ==="
           xcodebuild -showsdks | grep -i "ios\|watch"
+
+      - name: Verify LibreTransmitter exists
+        run: |
+          if [ -d "LibreTransmitter" ] && [ "$(ls -A LibreTransmitter)" ]; then
+            echo "✅ LibreTransmitter успешно скачан"
+            ls -la LibreTransmitter/ | head -10
+          else
+            echo "❌ LibreTransmitter НЕ скачан или пуст"
+            exit 1
+          fi
 
       - name: Install CocoaPods dependencies
         run: |
@@ -56,11 +66,7 @@ jobs:
       - name: Show errors
         if: always()
         run: |
-          echo "=== Все строки с error: ==="
-          grep -n "error:" xcodebuild.log | head -40 || echo "Не найдено"
-          echo ""
-          echo "=== Секция failed commands ==="
-          grep -A 15 "The following build commands failed" xcodebuild.log || echo "Не найдено"
+          grep -n "error:" xcodebuild.log | head -20 || echo "Ошибок не найдено"
 
       - name: Check archive exists
         if: always()
