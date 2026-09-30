@@ -1,0 +1,98 @@
+name: Build Unsigned iOS IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ aidex-integration ]
+
+jobs:
+  build:
+    name: Build iAPS
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode and download platforms
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.1.app/Contents/Developer
+          xcodebuild -runFirstLaunch
+          
+          xcrun simctl list > /dev/null
+          xcodebuild -downloadPlatform iOS -buildVersion 18.1
+          xcodebuild -downloadPlatform watchOS -buildVersion 11.1
+          
+          echo "=== Доступные SDK ==="
+          xcodebuild -showsdks | grep -i "ios\|watch"
+
+      - name: Install CocoaPods dependencies
+        run: |
+          if [ -f "Podfile" ]; then
+            pod install --repo-update
+          fi
+
+      - name: Build and Archive
+        id: archive
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          xcodebuild archive \
+            -project FreeAPS.xcodeproj \
+            -scheme FreeAPS \
+            -configuration Release \
+            -archivePath $PWD/build/FreeAPS.xcarchive \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            2>&1 | tee xcodebuild.log
+
+      - name: Show errors
+        if: always()
+        run: |
+          echo "=== Все строки с error: ==="
+          grep -n "error:" xcodebuild.log | head -40 || echo "Не найдено"
+          echo ""
+          echo "=== Секция failed commands ==="
+          grep -A 15 "The following build commands failed" xcodebuild.log || echo "Не найдено"
+
+      - name: Check archive exists
+        if: always()
+        run: |
+          if [ -d "build/FreeAPS.xcarchive" ]; then
+            echo "✅ Архив создан"
+            ls -la build/FreeAPS.xcarchive/Products/Applications/
+          else
+            echo "❌ Архив НЕ создан"
+          fi
+
+      - name: Package unsigned IPA
+        if: steps.archive.outcome == 'success'
+        run: |
+          mkdir -p Payload
+          APP_PATH=$(find build/FreeAPS.xcarchive/Products/Applications -maxdepth 1 -name "*.app" | head -1)
+          echo "Найден .app: $APP_PATH"
+          cp -R "$APP_PATH" Payload/
+          zip -qr FreeAPS-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA
+        if: steps.archive.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FreeAPS-unsigned-ipa
+          path: FreeAPS-unsigned.ipa
+          retention-days: 7
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: xcodebuild.log
+          retention-days: 7
